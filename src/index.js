@@ -136,6 +136,17 @@ async function handleApi(request, env) {
 export default {
   async fetch(request,env) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/media/") && request.method === "GET") {
+      try {
+        const key = url.pathname.slice(7);
+        if (!key || key.includes("..") || key.includes("\\\\")) return fail("Imagem não encontrada.",404);
+        const object = await env.IMAGES.get(key);
+        if (!object) return fail("Imagem não encontrada.",404);
+        const headers = new Headers(); object.writeHttpMetadata(headers);
+        headers.set("etag",object.httpEtag); headers.set("cache-control","public, max-age=86400");
+        return new Response(object.body,{headers});
+      } catch (error) { console.error("RADAR media error",error); return fail("Imagem não encontrada.",404); }
+    }
     if (url.pathname.startsWith("/api/")) {
       try { return await handleApi(request,env); }
       catch (error) { console.error("RADAR API error",error); return fail("Não foi possível concluir a operação.",500); }
