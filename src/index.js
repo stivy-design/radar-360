@@ -48,6 +48,15 @@ async function handleApi(request, env) {
   const url = new URL(request.url), path = url.pathname;
   if (request.method === "OPTIONS") return new Response(null,{status:204,headers:{"allow":"GET,POST,PUT,DELETE,OPTIONS"}});
   if (path === "/api/health" && request.method === "GET") return json({ok:true,service:"RADAR 360 API"});
+  if (path.startsWith("/media/") && request.method === "GET") {
+    const key = path.slice(7);
+    if (!key || key.includes("..") || key.includes("\\\\")) return fail("Imagem não encontrada.",404);
+    const object = await env.IMAGES.get(key);
+    if (!object) return fail("Imagem não encontrada.",404);
+    const headers = new Headers(); object.writeHttpMetadata(headers);
+    headers.set("etag",object.httpEtag); headers.set("cache-control","public, max-age=86400");
+    return new Response(object.body,{headers});
+  }
   if (path === "/api/login" && request.method === "POST") {
     if (!sameOrigin(request)) return fail("Origem inválida.",403);
     const ip = request.headers.get("CF-Connecting-IP") || "unknown";
@@ -97,7 +106,7 @@ async function handleApi(request, env) {
       const author = String(body.author || "Redação RADAR 360").slice(0,80);
       const summary = String(body.summary || "").slice(0,300);
       const now = new Date().toISOString();
-      await env.DB.prepare("INSERT INTO articles (title,slug,summary,body,category,status,author,created_at,updated_at,published_at) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(body.title.trim(),slug,summary,body.body.trim(),category,status,author,now,now,status==="published"?now:null).run();
+      await env.DB.prepare("INSERT INTO articles (title,slug,summary,body,category,status,author,cover_image,created_at,updated_at,published_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(body.title.trim(),slug,summary,body.body.trim(),category,status,author,body.cover_image||null,now,now,status==="published"?now:null).run();
       return json({ok:true,slug},201);
     }
     const articleId = path.match(/^\/api\/admin\/news\/(\d+)$/);
@@ -106,7 +115,7 @@ async function handleApi(request, env) {
       if (!body || typeof body.title !== "string" || typeof body.body !== "string") return fail("Dados incompletos.");
       const status = ["draft","review","published"].includes(body.status) ? body.status : "draft";
       const now = new Date().toISOString();
-      await env.DB.prepare("UPDATE articles SET title=?,summary=?,body=?,category=?,status=?,updated_at=?,published_at=CASE WHEN ?='published' THEN COALESCE(published_at,?) ELSE NULL END WHERE id=?").bind(body.title.trim().slice(0,160),String(body.summary||"").slice(0,300),body.body.trim().slice(0,100000),String(body.category||"Brasil").slice(0,40),status,now,status,now,Number(articleId[1])).run();
+      await env.DB.prepare("UPDATE articles SET title=?,summary=?,body=?,category=?,status=?,cover_image=COALESCE(?,cover_image),updated_at=?,published_at=CASE WHEN ?='published' THEN COALESCE(published_at,?) ELSE NULL END WHERE id=?").bind(body.title.trim().slice(0,160),String(body.summary||"").slice(0,300),body.body.trim().slice(0,100000),String(body.category||"Brasil").slice(0,40),status,body.cover_image||null,now,status,now,Number(articleId[1])).run();
       return json({ok:true});
     }
     if (articleId && request.method === "DELETE") {
