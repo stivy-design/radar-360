@@ -3,7 +3,7 @@ main = "src/index.js"
 compatibility_date = "2026-10-15"
 
 [assets]
-directory = "."
+directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 
@@ -17,8 +17,7 @@ migrations_dir = "migrations"
 binding = "IMAGES"
 bucket_name = "radar-360-images"
 
-# Configure the following secrets with Wrangler before enabling the admin:
+# Configure these as Worker secrets; never commit their values:
 # npx wrangler secret put ADMIN_PASSWORD_SALT
 # npx wrangler secret put ADMIN_PASSWORD_HASH
 # npx wrangler secret put SESSION_SECRET
-# Never commit secrets to this repository.
