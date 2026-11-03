@@ -39,7 +39,7 @@ async function isAdmin(request, env) {
 }
 function sameOrigin(request) {
   const origin = request.headers.get("Origin");
-  return !origin || origin === new URL(request.url).origin;
+  return origin === new URL(request.url).origin;
 }
 function slugify(value) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,100);
