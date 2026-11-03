@@ -49,7 +49,7 @@ async function handleApi(request, env) {
   if (request.method === "OPTIONS") return new Response(null,{status:204,headers:{"allow":"GET,POST,PUT,DELETE,OPTIONS"}});
   if (path === "/api/health" && request.method === "GET") return json({ok:true,service:"RADAR 360 API"});
   if (path.startsWith("/media/") && request.method === "GET") {
-    const key = path.slice(7);
+    const key = decodeURIComponent(path.slice(7));
     if (!key || key.includes("..") || key.includes("\\\\")) return fail("Imagem não encontrada.",404);
     const object = await env.IMAGES.get(key);
     if (!object) return fail("Imagem não encontrada.",404);
@@ -138,7 +138,7 @@ export default {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/media/") && request.method === "GET") {
       try {
-        const key = url.pathname.slice(7);
+        const key = decodeURIComponent(url.pathname.slice(7));
         if (!key || key.includes("..") || key.includes("\\\\")) return fail("Imagem não encontrada.",404);
         const object = await env.IMAGES.get(key);
         if (!object) return fail("Imagem não encontrada.",404);
