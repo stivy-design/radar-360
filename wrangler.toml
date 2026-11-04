@@ -27,4 +27,4 @@ bucket_name = "radar-360-imagens"
 # npx wrangler secret put SESSION_SECRET
 
 [triggers]
-crons = ["*/15 * * * *"]
+crons = ["0 11 * * *"]
