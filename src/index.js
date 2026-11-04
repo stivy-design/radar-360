@@ -199,7 +199,7 @@ async function handleApi(request, env) {
   if (path === "/api/admin/images/find-missing" && request.method === "POST") {
     if (!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
     if (!sameOrigin(request)) return fail("Origem inválida.",403);
-    const article = await env.DB.prepare("SELECT id,title,body FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='') ORDER BY published_at DESC LIMIT 1").first();
+    const article = await env.DB.prepare("SELECT id,title,body FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%') ORDER BY published_at DESC LIMIT 1").first();
     if (!article) return json({ok:true,found:0,remaining:0,message:"Todas as matérias publicadas já têm fotografia cadastrada."});
     const urls = [...String(article.body || "").matchAll(/https:\/\/[^\s<>"']+/gi)].map(match=>match[0].replace(/[),.;]+$/,""));
     let image = "";
@@ -208,9 +208,9 @@ async function handleApi(request, env) {
       if (image) break;
     }
     if (image) {
-      await env.DB.prepare("UPDATE articles SET cover_image=?,updated_at=? WHERE id=? AND (cover_image IS NULL OR cover_image='')").bind(image,new Date().toISOString(),article.id).run();
+      await env.DB.prepare("UPDATE articles SET cover_image=?,updated_at=? WHERE id=? AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%')").bind(image,new Date().toISOString(),article.id).run();
     }
-    const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='')").first();
+    const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%')").first();
     return json({ok:true,found:image?1:0,remaining:left?.n||0,title:article.title,message:image?"Fotografia original encontrada.":"A fonte não disponibilizou uma fotografia pública nesta matéria."});
   }
 
