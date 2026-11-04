@@ -69,9 +69,9 @@ async function handleApi(request, env) {
     if (!valid) return fail("Senha incorreta.",401);
     await env.DB.prepare("DELETE FROM login_attempts WHERE ip = ?").bind(ip).run().catch(()=>{});
     const token = await createSession(env);
-    return json({ok:true},{status:200,headers:{"set-cookie":COOKIE+"="+token+"; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age="+SESSION_SECONDS}});
+    return json({ok:true},200,{"set-cookie":COOKIE+"="+token+"; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age="+SESSION_SECONDS});
   }
-  if (path === "/api/logout" && request.method === "POST") return json({ok:true},{headers:{"set-cookie":COOKIE+"=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"}});
+  if (path === "/api/logout" && request.method === "POST") return json({ok:true},200,{"set-cookie":COOKIE+"=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"});
   if (path === "/api/session" && request.method === "GET") return json({authenticated:await isAdmin(request,env)});
   if (path === "/api/news" && request.method === "GET") {
     const category = url.searchParams.get("category");
