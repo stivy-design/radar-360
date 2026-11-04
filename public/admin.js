@@ -12,8 +12,8 @@ async function loadAiNews(){
  }catch(e){$('#aiMessage').textContent=e.message}
 }
 $('#runAi')?.addEventListener('click',async()=>{
- const b=$('#runAi');b.disabled=true;$('#aiMessage').textContent='Buscando notícias, verificando fontes e preparando matérias. Isso pode levar alguns minutos...';
- try{const r=await api('/api/admin/ai/run',{method:'POST'});$('#aiMessage').textContent='Concluído: '+r.found+' pautas analisadas; '+r.review+' novas matérias aguardam sua aprovação.';await loadAiNews()}
+ const b=$('#runAi');b.disabled=true;$('#aiMessage').textContent='Coletando pautas de fontes RSS gratuitas. Aguarde...';
+ try{const r=await api('/api/admin/ai/run',{method:'POST'});$('#aiMessage').textContent='Concluído: '+r.found+' pautas recebidas; '+r.review+' novas pautas aguardam sua apuração. Nenhuma foi publicada.';await loadAiNews()}
  catch(e){$('#aiMessage').textContent=e.message}
  finally{b.disabled=false}
 });
