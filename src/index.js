@@ -78,7 +78,7 @@ async function findPublisherImage(sourceUrl) {
     const response = await fetch(parsed.href, {
       headers: { "user-agent": "Mozilla/5.0 (compatible; RADAR360/1.0; +https://radar-360.stivy-071.workers.dev)", "accept": "text/html,application/xhtml+xml,*/*;q=0.8" },
       redirect: "follow",
-      signal: AbortSignal.timeout(9000)
+      signal: AbortSignal.timeout(5000)
     });
     if (!response.ok || !/html|xml/i.test(response.headers.get("content-type") || "")) return "";
     const finalUrl = new URL(response.url || parsed.href);
@@ -206,14 +206,14 @@ async function handleApi(request, env) {
   if (path === "/api/admin/images/find-missing" && request.method === "POST") {
     if (!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
     if (!sameOrigin(request)) return fail("Origem inválida.",403);
-    const articles = await env.DB.prepare("SELECT id,title,body FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%') ORDER BY updated_at ASC LIMIT 3").all();
+    const articles = await env.DB.prepare("SELECT id,title,body FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%') ORDER BY updated_at ASC LIMIT 1").all();
     if (!articles.results?.length) return json({ok:true,found:0,checked:0,remaining:0,message:"Todas as matérias publicadas já foram verificadas."});
     let found = 0, checked = 0, lastTitle = "";
     for (const article of articles.results) {
       lastTitle = article.title;
       const urls = [...String(article.body || "").matchAll(/https:\/\/[^\s<>"']+/gi)].map(match=>match[0].replace(/[),.;]+$/,""));
       let image = "";
-      for (const sourceUrl of [...new Set(urls)].slice(0,5)) {
+      for (const sourceUrl of [...new Set(urls)].slice(0,3)) {
         image = await findPublisherImage(sourceUrl);
         if (image) break;
       }
