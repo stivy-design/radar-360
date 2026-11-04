@@ -247,7 +247,11 @@ export async function runAiNews(env) {
     const now = new Date().toISOString();
     let candidateRow = await env.DB.prepare("SELECT id,status,article_id FROM ai_news_candidates WHERE fingerprint=?").bind(fingerprint).first();
     if (candidateRow?.status === "published" || candidateRow?.article_id) continue;
-    const sourceImage = await pageImage(uniqueSources[0].url).catch(() => "");
+    let sourceImage = "";
+    for (const source of uniqueSources.slice(0, 3)) {
+      sourceImage = await pageImage(source.url).catch(() => "");
+      if (sourceImage) break;
+    }
     if (!candidateRow) {
       const candidate = await env.DB.prepare("INSERT OR IGNORE INTO ai_news_candidates (fingerprint,title,summary,body,category,confidence,sources_json,status,created_at,updated_at) VALUES (?,?,?,?,?,? ,?,'review',?,?)")
         .bind(fingerprint, title, summary.slice(0, 300), body, cluster.category, "corroborada — duas ou mais fontes editoriais", JSON.stringify(uniqueSources), now, now).run();
