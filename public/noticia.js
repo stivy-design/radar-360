@@ -33,7 +33,7 @@ async function load(){
    '<h1>'+esc(a.title)+'</h1>'+
    (a.summary?'<p class="summary">'+esc(a.summary)+'</p>':'')+
    '<div class="article-meta">'+esc(a.author||'Redação RADAR 360')+' · '+(a.published_at?new Date(a.published_at).toLocaleString('pt-BR'):'')+'</div>'+
-   (image?'<img class="article-cover" src="'+esc(image)+'" alt="Imagem relacionada: '+esc(a.title)+'" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><div class="image-unavailable" hidden>Imagem original não fornecida pela fonte desta matéria.</div>':'<div class="image-unavailable">Imagem original não fornecida pela fonte desta matéria.</div>')+
+   (image?'<img class="article-cover" src="'+esc(image)+'" alt="Imagem relacionada: '+esc(a.title)+'" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><div class="image-unavailable" hidden>Imagem não disponível.</div>'+(String(a.cover_image||'').startsWith('ai/')?'<p class="ai-image-caption">Imagem ilustrativa gerada por inteligência artificial para representar o assunto da matéria.</p>':''):'<div class="image-unavailable">Imagem ainda não disponível para esta matéria.</div>')+
    '<div class="article-body">'+esc(body)+'</div>'+
    (sources.length?'<section class="article-sources"><h2>Fontes da notícia</h2>'+sources.map((url,i)=>'<p><a href="'+esc(url)+'" target="_blank" rel="noopener noreferrer">Consultar fonte '+(i+1)+' ↗</a></p>').join('')+'</section>':'');
  }catch(error){
