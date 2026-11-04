@@ -4,7 +4,7 @@ async function loadPublishedNews(){
  const lead=document.querySelector('.lead-grid');
  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const imageUrl=value=>{if(!value)return '';try{return value.startsWith('http://')||value.startsWith('https://')?value:'/media/'+value.split('/').map(encodeURIComponent).join('/')}catch{return ''}};
- const imageMarkup=(article,cls='news-image')=>{const src=imageUrl(article.cover_image);return src?'<img class="'+cls+'" src="'+esc(src)+'" alt="Imagem relacionada: '+esc(article.title)+'" loading="lazy" onerror="this.outerHTML=\\'<div class=&quot;'+cls+'&quot; aria-label=&quot;Imagem indisponível&quot;>IMAGEM INDISPONÍVEL</div>\\'">':'<div class="'+cls+' image-placeholder">IMAGEM NÃO DISPONÍVEL</div>'};
+ const imageMarkup=(article,cls='news-image')=>{const src=imageUrl(article.cover_image);return src?'<img class="'+cls+'" src="'+esc(src)+'" alt="Imagem relacionada: '+esc(article.title)+'" loading="lazy">':'<div class="'+cls+' image-placeholder">IMAGEM NÃO DISPONÍVEL</div>'};
  try{
   const response=await fetch('/api/news',{headers:{'accept':'application/json'},cache:'no-store'});
   if(!response.ok){let detail='';try{const err=await response.json();detail=err.error||''}catch{}throw new Error('A API respondeu HTTP '+response.status+(detail?' — '+detail:''))}
