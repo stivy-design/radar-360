@@ -22,7 +22,7 @@ async function hmac(value, secret) {
 async function verifyPassword(password, env) {
   if (!env.ADMIN_PASSWORD_SALT || !env.ADMIN_PASSWORD_HASH) return false;
   const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name:"PBKDF2", salt:fromB64url(env.ADMIN_PASSWORD_SALT), iterations:310000, hash:"SHA-256" }, material, 256);
+  const bits = await crypto.subtle.deriveBits({ name:"PBKDF2", salt:fromB64url(env.ADMIN_PASSWORD_SALT), iterations:100000, hash:"SHA-256" }, material, 256);
   return safeEqual(b64url(bits), env.ADMIN_PASSWORD_HASH);
 }
 async function createSession(env) {
