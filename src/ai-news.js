@@ -44,19 +44,36 @@ function feedItems(xml,category,provider) {
   }).filter(x=>x.title&&/^https?:\/\//i.test(x.url));
 }
 async function pageImage(url) {
-  try{
-    const response=await fetch(url,{headers:{"user-agent":"Mozilla/5.0 (compatible; RADAR360Bot/1.0)","accept":"text/html"},redirect:"follow",signal:AbortSignal.timeout(5000)});
-    if(!response.ok)return "";
-    const html=(await response.text()).slice(0,180000);
-    const meta=[...html.matchAll(/<meta\b[^>]*>/gi)].map(x=>x[0]);
-    for(const tagText of meta){
-      const key=(attr(tagText,"property")||attr(tagText,"name")).toLowerCase();
-      if(key==="og:image"||key==="twitter:image"){
-        const raw=attr(tagText,"content");
-        if(raw){const image=new URL(raw,url);if(["http:","https:"].includes(image.protocol))return image.href}
+  try {
+    const initial = new URL(url);
+    if (initial.protocol !== "https:") return "";
+    const response = await fetch(initial.href, {
+      headers: { "user-agent": "Mozilla/5.0 (compatible; RADAR360Bot/1.0; +https://radar-360.stivy-071.workers.dev)", "accept": "text/html,application/xhtml+xml" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(7000)
+    });
+    if (!response.ok || !/html|xml/i.test(response.headers.get("content-type") || "")) return "";
+    const finalUrl = new URL(response.url || initial.href);
+    if (finalUrl.protocol !== "https:" || /(^|\.)(google|bing)\.com$|news\.google\.com$|bing\.net$/i.test(finalUrl.hostname)) return "";
+    const html = (await response.text()).slice(0, 350000);
+    const candidates = [];
+    for (const tagText of [...html.matchAll(/<meta\b[^>]*>/gi)].map(x => x[0])) {
+      const key = (attr(tagText, "property") || attr(tagText, "name")).toLowerCase();
+      if (["og:image", "og:image:url", "twitter:image", "twitter:image:src"].includes(key)) {
+        const raw = attr(tagText, "content");
+        if (raw) candidates.push(raw);
       }
     }
-  }catch{}
+    const imageLink = html.match(/<link\b[^>]*rel=["'][^"']*image_src[^"']*["'][^>]*>/i)?.[0];
+    if (imageLink) candidates.push(attr(imageLink, "href"));
+    for (const match of html.matchAll(/"image"\s*:\s*(?:"([^"]+)"|\[\s*"([^"]+)")/gi)) candidates.push(match[1] || match[2]);
+    for (const raw of candidates) {
+      try {
+        const image = new URL(raw.replace(/&amp;/g, "&").replace(/\\u0026/g, "&"), finalUrl);
+        if (image.protocol === "https:" && !/\.svg(\?|$)/i.test(image.href)) return image.href;
+      } catch {}
+    }
+  } catch {}
   return "";
 }
 async function enrichImages(items) {
@@ -91,26 +108,39 @@ function normalizeHeadline(value) {
   return String(value||"").toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
 }
 export async function findOriginalPublisherImage(title, category) {
-  const query='"'+String(title||"").slice(0,150)+'"';
-  const rss="https://www.bing.com/news/search?q="+encodeURIComponent(query)+"&format=rss&setlang=pt-br&cc=BR";
-  const response=await fetch(rss,{headers:{"accept":"application/rss+xml, application/xml, text/xml, */*"},signal:AbortSignal.timeout(6000)});
-  if(!response.ok)return "";
-  const xml=await response.text();
-  const items=feedItems(xml,category||"Brasil","Bing News RSS");
-  const target=normalizeHeadline(title);
-  const ranked=items.map(item=>{
-    const a=new Set(normalizeHeadline(item.title).split(" "));
-    const b=new Set(target.split(" "));
-    const overlap=[...a].filter(word=>b.has(word)&&word.length>2).length;
-    return {...item,score:overlap/Math.max(1,Math.min(a.size,b.size))};
-  }).sort((a,b)=>b.score-a.score);
-  for(const item of ranked.slice(0,3)){
-    if(item.score<0.72)continue;
-    if(item.image && /^https:\/\//i.test(item.image))return item.image;
-    if(item.url && !/bing\.com\/news\/search/i.test(item.url)){
-      const image=await pageImage(item.url);
-      if(image)return image;
-    }
+  const cleanTitle = String(title || "").replace(/\s+/g, " ").trim().slice(0, 150);
+  if (!cleanTitle) return "";
+  const queries = [...new Set(['"' + cleanTitle + '"', cleanTitle, cleanTitle + " " + String(category || "")])];
+  const feeds = await Promise.all(queries.map(async query => {
+    const encoded = encodeURIComponent(query);
+    const urls = [
+      "https://www.bing.com/news/search?q=" + encoded + "&format=rss&setlang=pt-br&cc=BR",
+      "https://news.google.com/rss/search?q=" + encoded + "&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+    ];
+    const results = await Promise.all(urls.map(async rss => {
+      try {
+        const response = await fetch(rss, { headers: { "accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*" }, signal: AbortSignal.timeout(5500) });
+        if (!response.ok) return [];
+        return feedItems(await response.text(), category || "Brasil", "Busca de notícias");
+      } catch { return []; }
+    }));
+    return results.flat();
+  }));
+  const targetWords = new Set(normalizeHeadline(cleanTitle).split(" ").filter(word => word.length > 2));
+  const unique = new Map();
+  for (const item of feeds.flat()) {
+    const key = item.url || item.title;
+    if (!unique.has(key)) unique.set(key, item);
+  }
+  const ranked = [...unique.values()].map(item => {
+    const words = new Set(normalizeHeadline(item.title).split(" ").filter(word => word.length > 2));
+    const overlap = [...words].filter(word => targetWords.has(word)).length;
+    return { ...item, score: overlap / Math.max(1, Math.min(words.size, targetWords.size)) };
+  }).filter(item => item.score >= 0.58).sort((a, b) => b.score - a.score);
+  for (const item of ranked.slice(0, 8)) {
+    if (!item.url) continue;
+    const image = await pageImage(item.url);
+    if (image) return image;
   }
   return "";
 }
