@@ -147,9 +147,9 @@ $("#runAi")?.addEventListener("click", async () => {
   $("#aiMessage").textContent = "Coletando pautas de fontes RSS gratuitas. Aguarde...";
   try {
     const result = await api("/api/admin/ai/run", { method: "POST" });
-    $("#aiMessage").textContent = "Busca concluída: " + result.found + " notícias analisadas; " + result.published + " matérias publicadas automaticamente após confirmação em fontes independentes.";
     await loadAiNews();
     await loadArticles();
+    $("#aiMessage").textContent = "Busca concluída: " + result.found + " notícias analisadas; " + result.published + " matérias publicadas automaticamente após confirmação em fontes independentes.";
   } catch (error) { $("#aiMessage").textContent = error.message; }
   finally { button.disabled = false; }
 });
