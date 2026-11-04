@@ -60,7 +60,7 @@ async function generateAiCover(env, article) {
   else if (value instanceof ReadableStream) bytes = new Uint8Array(await new Response(value).arrayBuffer());
   else if (Array.isArray(value)) bytes = new Uint8Array(value);
   else if (typeof value === "string") {
-    const raw = atob(value.replace(/^data:image\\/png;base64,/i,""));
+    const raw = atob(value.includes(",") ? value.slice(value.indexOf(",")+1) : value);
     bytes = Uint8Array.from(raw, ch => ch.charCodeAt(0));
   }
   if (!bytes || bytes.length < 1000) throw new Error("O modelo de imagem não retornou um arquivo PNG válido.");
