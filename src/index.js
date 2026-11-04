@@ -84,9 +84,9 @@ async function findPublisherImage(sourceUrl) {
     const finalUrl = new URL(response.url);
     if (finalUrl.protocol !== "https:" || finalUrl.hostname === "localhost") return "";
     const html = (await response.text()).slice(0, 220000);
-    const tags = [...html.matchAll(/<meta\\b[^>]*>/gi)].map(match => match[0]);
+    const tags = [...html.matchAll(/<meta\b[^>]*>/gi)].map(match => match[0]);
     const readAttr = (tag, name) => {
-      const match = tag.match(new RegExp(name + "\\\\s*=\\\\s*[\"']([^\"']+)[\"']", "i"));
+      const match = tag.match(new RegExp(name + "\\s*=\\s*[\"']([^\"']+)[\"']", "i"));
       return match ? match[1].replace(/&amp;/g, "&").replace(/&#x2F;/gi, "/") : "";
     };
     for (const tag of tags) {
@@ -201,7 +201,7 @@ async function handleApi(request, env) {
     if (!sameOrigin(request)) return fail("Origem inválida.",403);
     const article = await env.DB.prepare("SELECT id,title,body FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='') ORDER BY published_at DESC LIMIT 1").first();
     if (!article) return json({ok:true,found:0,remaining:0,message:"Todas as matérias publicadas já têm fotografia cadastrada."});
-    const urls = [...String(article.body || "").matchAll(/https:\\/\\/[^\\s<>"']+/gi)].map(match=>match[0].replace(/[),.;]+$/,""));
+    const urls = [...String(article.body || "").matchAll(/https:\/\/[^\s<>"']+/gi)].map(match=>match[0].replace(/[),.;]+$/,""));
     let image = "";
     for (const sourceUrl of [...new Set(urls)].slice(0,4)) {
       image = await findPublisherImage(sourceUrl);
