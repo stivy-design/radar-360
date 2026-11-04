@@ -90,19 +90,22 @@ async function fetchFeed(url,category,provider) {
   return {items,error:items.length?null:"feed respondeu sem itens RSS/Atom"};
 }
 async function collectFeeds() {
-  const batches=await Promise.all(FEEDS.map(async ([category,query])=>{
-    const google="https://news.google.com/rss/search?q="+encodeURIComponent(query)+"&hl=pt-BR&gl=BR&ceid=BR:pt-419";
-    const bing="https://www.bing.com/news/search?q="+encodeURIComponent(query)+"&format=rss&setlang=pt-br&cc=BR";
-    const primary=await fetchFeed(google,category,"Google News RSS").catch(e=>({items:[],error:String(e.message||e)}));
-    if(primary.items.length)return primary.items;
-    const fallback=await fetchFeed(bing,category,"Bing News RSS").catch(e=>({items:[],error:String(e.message||e)}));
-    return fallback.items;
+  const batches = await Promise.all(FEEDS.map(async ([category, query]) => {
+    const google = "https://news.google.com/rss/search?q=" + encodeURIComponent(query) + "&hl=pt-BR&gl=BR&ceid=BR:pt-419";
+    const bing = "https://www.bing.com/news/search?q=" + encodeURIComponent(query) + "&format=rss&setlang=pt-br&cc=BR";
+    const results = await Promise.all([
+      fetchFeed(google, category, "Google News RSS").catch(() => ({ items: [] })),
+      fetchFeed(bing, category, "Bing News RSS").catch(() => ({ items: [] }))
+    ]);
+    return results.flatMap(result => result.items);
   }));
-  const seen=new Set();
-  return batches.flat().filter(item=>{
-    const key=item.title.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
-    if(seen.has(key))return false;seen.add(key);return true;
-  }).slice(0,40);
+  const seen = new Set();
+  return batches.flat().filter(item => {
+    const key = normalizeHeadline(item.title) + "|" + String(item.source || "").toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 100);
 }
 function normalizeHeadline(value) {
   return String(value||"").toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
@@ -145,34 +148,96 @@ export async function findOriginalPublisherImage(title, category) {
   return "";
 }
 
-export async function runAiNews(env) {
-  const feeds=await enrichImages(await collectFeeds());
-  if(!feeds.length)throw new Error("Nenhuma notícia foi recebida das fontes RSS (Google News e Bing News). Confira a disponibilidade dos feeds.");
-  let saved=0,review=0;
-  for(const item of feeds) {
-    const cleanTitle=item.title.replace(/\s+/g," ").trim().slice(0,160);
-    const cleanSummary=(item.description||"").replace(/\s+/g," ").trim().slice(0,300);
-    const summary=cleanSummary||"O feed forneceu apenas o título desta notícia. Abra a fonte para consultar os detalhes.";
-    const body=[
-      "PAUTA AUTOMÁTICA PARA APURAÇÃO — NÃO É UMA MATÉRIA PRONTA",
-      "",
-      "O que o feed informa:",
-      cleanSummary||"Não foi fornecido resumo pelo feed. Consulte o link original.",
-      "",
-      "ATENÇÃO EDITORIAL:",
-      "Este registro foi criado automaticamente a partir de um feed RSS gratuito. O conteúdo não foi verificado por duas fontes independentes e não foi redigido por inteligência artificial. Não publique como notícia confirmada sem abrir a fonte, conferir a data, apurar os fatos e buscar confirmação independente.",
-      "",
-      "Fonte inicial: "+item.source,
-      "Data informada pelo feed: "+(item.published||"Não informada"),
-      "Link para conferência: "+item.url
-    ].join("\n");
-    const normalized=cleanTitle.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
-    const fingerprint=btoa(unescape(encodeURIComponent(normalized))).replace(/[^a-zA-Z0-9]/g,"").slice(0,180);
-    const now=new Date().toISOString();
-    const source=[{name:item.source,url:item.url,image:item.image||""}];
-    const inserted=await env.DB.prepare("INSERT OR IGNORE INTO ai_news_candidates (fingerprint,title,summary,body,category,confidence,sources_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'review',?,?)")
-      .bind(fingerprint,cleanTitle,summary,body,item.category,"baixa",JSON.stringify(source),now,now).run();
-    if(inserted.meta?.changes){saved++;review++;}
+const TRUSTED_PUBLISHERS = [
+  "agencia brasil","g1","globo","o globo","folha de s paulo","folha","estadao","estado de s paulo","uol","cnn brasil","bbc","reuters","associated press","ap news","afp","dw","deutsche welle","france 24","poder360","nexo","valor economico","infomoney","exame","veja","carta capital","agencia senado","agencia camara","senado","camara dos deputados","gov.br","ministerio da saude","fiocruz","inpe","ibge","banco central","ge","ge globo","espn","lance","terra","tecmundo","canaltech","olhar digital","techcrunch","wired","nature","science","el pais","the guardian","the new york times","the washington post","al jazeera","sky news","euronews","marca","as"
+];
+function trustedPublisher(name) {
+  const normalized = normalizeHeadline(name);
+  if (!normalized || normalized.includes("google news") || normalized.includes("bing news")) return false;
+  return TRUSTED_PUBLISHERS.some(known => normalized === known || normalized.includes(known));
+}
+function storySimilarity(a, b) {
+  const stop = new Set(["para","com","uma","das","dos","que","por","sobre","após","entre","the","and","from","this","that","brasil","brasileiro","brasileira","hoje"]);
+  const aa = new Set(normalizeHeadline(a).split(" ").filter(w => w.length > 2 && !stop.has(w)));
+  const bb = new Set(normalizeHeadline(b).split(" ").filter(w => w.length > 2 && !stop.has(w)));
+  if (!aa.size || !bb.size) return 0;
+  const common = [...aa].filter(w => bb.has(w)).length;
+  return common / Math.max(1, Math.min(aa.size, bb.size));
+}
+async function writeNewsSummary(env, title, items) {
+  const evidence = items.map((item, index) =>
+    (index + 1) + ". Veículo: " + item.source + "\nManchete: " + item.title + "\nTrecho do feed: " + String(item.description || "").slice(0, 650)
+  ).join("\n\n").slice(0, 6500);
+  if (env.AI) {
+    try {
+      const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fp8", {
+        messages: [
+          { role: "system", content: "Você é editor de um portal jornalístico brasileiro. Escreva em português claro, neutro e objetivo. Use somente fatos explícitos nos trechos fornecidos. Não invente datas, números, nomes, causas, citações ou contexto. Se os trechos não sustentarem uma informação, omita-a. Não transforme alegações em fatos confirmados. Produza um resumo jornalístico de 2 a 3 parágrafos, sem título e sem mencionar inteligência artificial." },
+          { role: "user", content: "Manchete principal: " + title + "\n\nRelatos publicados por veículos distintos:\n" + evidence + "\n\nRedija apenas um resumo fiel ao material fornecido." }
+        ],
+        temperature: 0.1,
+        max_tokens: 260
+      });
+      const text = String(result?.response || "").trim();
+      if (text.length >= 100 && text.length <= 1800) return text;
+    } catch (error) {
+      console.warn("RADAR AI summary fallback:", String(error));
+    }
   }
-  return {found:feeds.length,saved,review,published:0,mode:"rss_free"};
+  const excerpts = [...new Set(items.map(item => String(item.description || "").trim()).filter(Boolean))].slice(0, 3);
+  return excerpts.length ? excerpts.join("\n\n").slice(0, 1400) : "Os veículos listados publicaram reportagens sobre este assunto. Consulte os links das fontes para obter os detalhes completos.";
+}
+export async function runAiNews(env) {
+  const feeds = await collectFeeds();
+  if (!feeds.length) throw new Error("Nenhuma notícia foi recebida dos feeds de Google News e Bing News.");
+  const nowMs = Date.now();
+  const fresh = feeds.filter(item => {
+    const time = Date.parse(item.published || "");
+    return Number.isFinite(time) && time <= nowMs + 60 * 60 * 1000 && nowMs - time <= 36 * 60 * 60 * 1000;
+  });
+  const clusters = [];
+  for (const item of fresh) {
+    const publisher = String(item.source || "").trim();
+    if (!trustedPublisher(publisher)) continue;
+    let cluster = clusters.find(group => group.category === item.category && storySimilarity(group.items[0].title, item.title) >= 0.68);
+    if (!cluster) {
+      cluster = { category: item.category, items: [] };
+      clusters.push(cluster);
+    }
+    if (!cluster.items.some(existing => normalizeHeadline(existing.source) === normalizeHeadline(publisher))) cluster.items.push(item);
+  }
+  let published = 0, review = 0, saved = 0;
+  for (const cluster of clusters) {
+    const sources = cluster.items.filter(item => trustedPublisher(item.source));
+    const uniquePublishers = new Set(sources.map(item => normalizeHeadline(item.source)));
+    if (uniquePublishers.size < 2) continue;
+    const lead = sources[0];
+    const title = lead.title.replace(/\s+/g, " ").trim().slice(0, 160);
+    const summary = await writeNewsSummary(env, title, sources);
+    const sourceList = sources.map(item => ({ name: item.source, url: item.url })).filter(source => /^https:\/\//i.test(source.url));
+    const uniqueSources = [...new Map(sourceList.map(source => [normalizeHeadline(source.name), source])).values()];
+    if (uniqueSources.length < 2) continue;
+    const body = [
+      summary,
+      "",
+      "Esta matéria foi preparada a partir de relatos publicados por veículos jornalísticos independentes. A confirmação definitiva dos fatos depende da apuração e das atualizações das fontes.",
+      "",
+      "Fontes consultadas:",
+      ...uniqueSources.map(source => source.name + ": " + source.url)
+    ].join("\n");
+    const normalized = normalizeHeadline(title);
+    const fingerprint = btoa(unescape(encodeURIComponent(normalized))).replace(/[^a-zA-Z0-9]/g, "").slice(0, 180);
+    const now = new Date().toISOString();
+    const candidate = await env.DB.prepare("INSERT OR IGNORE INTO ai_news_candidates (fingerprint,title,summary,body,category,confidence,sources_json,status,created_at,updated_at) VALUES (?,?,?,?,?,? ,?,'review',?,?)")
+      .bind(fingerprint, title, summary.slice(0, 300), body, cluster.category, "alta — duas ou mais fontes editoriais", JSON.stringify(uniqueSources), now, now).run();
+    if (!candidate.meta?.changes) continue;
+    saved++;
+    const slug = normalizeHeadline(title).replace(/\s+/g, "-").slice(0, 90) + "-" + crypto.randomUUID().slice(0, 8);
+    const inserted = await env.DB.prepare("INSERT INTO articles(title,slug,summary,body,category,status,author,cover_image,created_at,updated_at,published_at) VALUES(?,?,?,?,?,'published','Redação RADAR 360',NULL,?,?,?)")
+      .bind(title, slug, summary.slice(0, 300), body, cluster.category, now, now, now).run();
+    await env.DB.prepare("UPDATE ai_news_candidates SET status='published',article_id=?,updated_at=? WHERE id=?")
+      .bind(inserted.meta.last_row_id, now, candidate.meta.last_row_id).run();
+    published++;
+  }
+  return { found: feeds.length, saved, review, published, corroborated: published, mode: "automatic_multi_source" };
 }
