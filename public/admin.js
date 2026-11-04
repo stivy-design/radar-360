@@ -25,4 +25,26 @@ $('#aiCandidates')?.addEventListener('click',async e=>{
  try{await api('/api/admin/ai/candidates/'+id+'/'+action,{method:'POST'});$('#aiMessage').textContent=approve?'Matéria publicada no portal.':'Pauta rejeitada.';await loadAiNews();await loadArticles()}
  catch(err){$('#aiMessage').textContent=err.message}
 });
+
+const generateMissingImages=$('#generateMissingImages');
+generateMissingImages?.addEventListener('click',async()=>{
+ generateMissingImages.disabled=true;
+ const status=$('#imageAiMessage');
+ let generated=0,remaining=null;
+ try{
+  status.textContent='Preparando geração das capas. Isso pode levar alguns instantes...';
+  for(let i=0;i<20;i++){
+   const result=await api('/api/admin/images/generate-missing',{method:'POST'});
+   remaining=Number(result.remaining||0);
+   if(!result.generated){status.textContent=result.message||'Todas as matérias já têm imagem.';break;}
+   generated++;
+   status.textContent='Imagem criada: '+result.title+'. '+generated+' concluída(s); '+remaining+' restante(s).';
+   await loadArticles();
+   if(remaining===0){status.textContent='Concluído! '+generated+' imagem(ns) editorial(is) criada(s).';break;}
+  }
+  if(remaining>0&&generated>=20)status.textContent+=' Ainda faltam '+remaining+'. Clique novamente para continuar.';
+ }catch(error){status.textContent='A geração foi interrompida: '+error.message+(generated?' Imagens já criadas: '+generated+'.':'');}
+ finally{generateMissingImages.disabled=false;}
+});
+
 checkSession();
