@@ -194,7 +194,7 @@ $("#findMissingImages")?.addEventListener("click", async () => {
   button.disabled = true;
   let found = 0;
   let remaining = null;
-  message.textContent = "Procurando fotografias nas fontes originais. Isso pode levar alguns minutos...";
+  message.textContent = "Iniciando busca nas fontes originais. O painel vai verificar as matérias em sequência...";
   try {
     for (let attempt = 0; attempt < 25; attempt++) {
       const result = await api("/api/admin/images/find-missing", { method: "POST" });
