@@ -206,7 +206,7 @@ async function handleApi(request, env) {
   if (path === "/api/admin/images/find-missing" && request.method === "POST") {
     if (!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
     if (!sameOrigin(request)) return fail("Origem inválida.",403);
-    const articles = await env.DB.prepare("SELECT id,title,body FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%') ORDER BY updated_at ASC LIMIT 1").all();
+    const articles = await env.DB.prepare("SELECT id,title,body,category FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%') ORDER BY updated_at ASC LIMIT 1").all();
     if (!articles.results?.length) return json({ok:true,found:0,checked:0,remaining:0,message:"Todas as matérias publicadas já foram verificadas."});
     let found = 0, checked = 0, lastTitle = "";
     for (const article of articles.results) {
@@ -218,7 +218,7 @@ async function handleApi(request, env) {
         if (image) break;
       }
       if (!image) {
-        try { image = await findOriginalPublisherImage(article.title, "Brasil"); }
+        try { image = await findOriginalPublisherImage(article.title, article.category); }
         catch (error) { console.warn("RADAR alternate publisher image search:", String(error)); }
       }
       if (image) {
