@@ -45,6 +45,30 @@ function sameOrigin(request) {
 function slugify(value) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,100);
 }
+
+async function generateAiCover(env, article) {
+  if (!env.AI) throw new Error("O serviço de geração de imagens ainda não está habilitado no Cloudflare.");
+  const title = String(article.title || "").slice(0,160);
+  const category = String(article.category || "Notícias").slice(0,50);
+  const summary = String(article.summary || "").slice(0,350);
+  const prompt = "Create a polished, photorealistic editorial illustration for a Brazilian digital news portal. News topic: "+title+". Category: "+category+". Context: "+summary+". Create a visually specific scene that clearly communicates this subject, sophisticated newsroom art direction, cinematic natural lighting, realistic details, clean composition, horizontal 16:9 crop, no text, no letters, no logos, no watermarks. This is an illustrative conceptual image, NOT documentary evidence: do not portray a real identifiable person, do not fabricate a recognizable real event, and do not imply this is an actual press photograph.";
+  const output = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", { prompt, width:768, height:432, num_steps:4 });
+  let bytes = null;
+  const value = output?.image ?? output;
+  if (value instanceof Uint8Array) bytes = value;
+  else if (value instanceof ArrayBuffer) bytes = new Uint8Array(value);
+  else if (value instanceof ReadableStream) bytes = new Uint8Array(await new Response(value).arrayBuffer());
+  else if (Array.isArray(value)) bytes = new Uint8Array(value);
+  else if (typeof value === "string") {
+    const raw = atob(value.replace(/^data:image\\/png;base64,/i,""));
+    bytes = Uint8Array.from(raw, ch => ch.charCodeAt(0));
+  }
+  if (!bytes || bytes.length < 1000) throw new Error("O modelo de imagem não retornou um arquivo PNG válido.");
+  const key = "ai/"+crypto.randomUUID()+".png";
+  await env.IMAGES.put(key, bytes, { httpMetadata:{ contentType:"image/png", cacheControl:"public, max-age=31536000, immutable" }, customMetadata:{ generatedBy:"Workers AI", imageType:"illustrative" } });
+  return key;
+}
+
 async function handleApi(request, env) {
   const url = new URL(request.url), path = url.pathname;
   if (request.method === "OPTIONS") return new Response(null,{status:204,headers:{"allow":"GET,POST,PUT,DELETE,OPTIONS"}});
@@ -114,7 +138,9 @@ async function handleApi(request, env) {
     const now=new Date().toISOString();
     const sources=JSON.parse(candidate.sources_json);
     const body=candidate.body+"\\n\\nFontes consultadas:\\n"+sources.map(s=>s.name+": "+s.url).join("\\n");
-    const coverImage=sources.find(s=>typeof s.image==="string"&&(s.image.startsWith("https://")||s.image.startsWith("http://")))?.image||null;
+    let coverImage=null;
+    try { coverImage=await generateAiCover(env,candidate); }
+    catch(error) { console.error("RADAR AI cover generation failed",error); coverImage=sources.find(s=>typeof s.image==="string"&&(s.image.startsWith("https://")||s.image.startsWith("http://")))?.image||null; }
     const inserted=await env.DB.prepare("INSERT INTO articles(title,slug,summary,body,category,status,author,cover_image,created_at,updated_at,published_at) VALUES(?,?,?,?,?,'published','Redação RADAR 360',?,?,?,?)")
       .bind(candidate.title,slug,candidate.summary,body,candidate.category,coverImage,now,now,now).run();
     await env.DB.prepare("UPDATE ai_news_candidates SET status='published',article_id=?,updated_at=? WHERE id=?").bind(inserted.meta.last_row_id,now,candidate.id).run();
@@ -136,6 +162,18 @@ async function handleApi(request, env) {
     const article = await env.DB.prepare("SELECT title,slug,summary,body,category,cover_image,author,published_at FROM articles WHERE slug=? AND status='published'").bind(detail[1]).first();
     return article ? json({article},200,{"cache-control":"public, max-age=60"}) : fail("Matéria não encontrada.",404);
   }
+
+  if (path === "/api/admin/images/generate-missing" && request.method === "POST") {
+    if (!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
+    if (!sameOrigin(request)) return fail("Origem inválida.",403);
+    const article = await env.DB.prepare("SELECT id,title,summary,category FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='') ORDER BY published_at DESC LIMIT 1").first();
+    if (!article) return json({ok:true,generated:0,remaining:0,message:"Todas as matérias publicadas já têm imagem."});
+    const key = await generateAiCover(env,article);
+    await env.DB.prepare("UPDATE articles SET cover_image=?,updated_at=? WHERE id=? AND (cover_image IS NULL OR cover_image='')").bind(key,new Date().toISOString(),article.id).run();
+    const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='')").first();
+    return json({ok:true,generated:1,remaining:left?.n||0,title:article.title});
+  }
+
   if (path.startsWith("/api/admin/")) {
     if (!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
     if (!sameOrigin(request)) return fail("Origem inválida.",403);
