@@ -1,3 +1,4 @@
+import { runAiNews } from "./ai-news.js";
 const COOKIE = "radar_session";
 const SESSION_SECONDS = 60 * 60 * 8;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -72,7 +73,51 @@ async function handleApi(request, env) {
     return json({ok:true},200,{"set-cookie":COOKIE+"="+token+"; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age="+SESSION_SECONDS});
   }
   if (path === "/api/logout" && request.method === "POST") return json({ok:true},200,{"set-cookie":COOKIE+"=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"});
+
   if (path === "/api/session" && request.method === "GET") return json({authenticated:await isAdmin(request,env)});
+  if (path === "/api/admin/ai/status" && request.method === "GET") {
+    if (!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
+    const pending=await env.DB.prepare("SELECT COUNT(*) AS n FROM ai_news_candidates WHERE status='review'").first();
+    const latest=await env.DB.prepare("SELECT * FROM ai_news_runs ORDER BY id DESC LIMIT 1").first();
+    return json({configured:Boolean(env.OPENAI_API_KEY),pending:pending?.n||0,latest});
+  }
+  if (path === "/api/admin/ai/candidates" && request.method === "GET") {
+    if (!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
+    const rows=await env.DB.prepare("SELECT id,title,summary,body,category,confidence,sources_json,status,created_at FROM ai_news_candidates WHERE status='review' ORDER BY created_at DESC LIMIT 50").all();
+    return json({candidates:rows.results||[]});
+  }
+  if (path === "/api/admin/ai/run" && request.method === "POST") {
+    if (!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
+    const now=new Date().toISOString();
+    const run=await env.DB.prepare("INSERT INTO ai_news_runs(started_at,status) VALUES (?,'running')").bind(now).run();
+    try {
+      const result=await runAiNews(env);
+      await env.DB.prepare("UPDATE ai_news_runs SET finished_at=?,status='completed',found_count=?,review_count=?,published_count=? WHERE id=?")
+        .bind(new Date().toISOString(),result.found,result.review,result.published,run.meta.last_row_id).run();
+      return json({ok:true,...result});
+    } catch(error) {
+      await env.DB.prepare("UPDATE ai_news_runs SET finished_at=?,status='failed',error_message=? WHERE id=?")
+        .bind(new Date().toISOString(),String(error.message||error).slice(0,500),run.meta.last_row_id).run();
+      throw error;
+    }
+  }
+  const aiDecision=path.match(/^\\/api\\/admin\\/ai\\/candidates\\/(\\d+)\\/(approve|reject)$/);
+  if(aiDecision && request.method==="POST"){
+    if(!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
+    const candidate=await env.DB.prepare("SELECT * FROM ai_news_candidates WHERE id=? AND status='review'").bind(Number(aiDecision[1])).first();
+    if(!candidate) return fail("Pauta não encontrada ou já processada.",404);
+    if(aiDecision[2]==="reject"){
+      await env.DB.prepare("UPDATE ai_news_candidates SET status='rejected',updated_at=? WHERE id=?").bind(new Date().toISOString(),candidate.id).run();
+      return json({ok:true});
+    }
+    const slug=slugify(candidate.title)+"-"+crypto.randomUUID().slice(0,8);
+    const now=new Date().toISOString();
+    const body=candidate.body+"\\n\\nFontes consultadas:\\n"+JSON.parse(candidate.sources_json).map(s=>s.name+": "+s.url).join("\\n");
+    const inserted=await env.DB.prepare("INSERT INTO articles(title,slug,summary,body,category,status,author,created_at,updated_at,published_at) VALUES(?,?,?,?,?,'published','Redação RADAR 360',?,?,?)")
+      .bind(candidate.title,slug,candidate.summary,body,candidate.category,now,now,now).run();
+    await env.DB.prepare("UPDATE ai_news_candidates SET status='published',article_id=?,updated_at=? WHERE id=?").bind(inserted.meta.last_row_id,now,candidate.id).run();
+    return json({ok:true,slug});
+  }
   if (path === "/api/news" && request.method === "GET") {
     const category = url.searchParams.get("category");
     const q = url.searchParams.get("q");
@@ -134,6 +179,19 @@ async function handleApi(request, env) {
   return fail("Rota não encontrada.",404);
 }
 export default {
+  async scheduled(controller,env,ctx) {
+    const now=new Date().toISOString();
+    const run=await env.DB.prepare("INSERT INTO ai_news_runs(started_at,status) VALUES (?,'running')").bind(now).run();
+    try {
+      const result=await runAiNews(env);
+      await env.DB.prepare("UPDATE ai_news_runs SET finished_at=?,status='completed',found_count=?,review_count=?,published_count=? WHERE id=?")
+        .bind(new Date().toISOString(),result.found,result.review,result.published,run.meta.last_row_id).run();
+    } catch(error) {
+      console.error("RADAR AI scheduled error",error);
+      await env.DB.prepare("UPDATE ai_news_runs SET finished_at=?,status='failed',error_message=? WHERE id=?")
+        .bind(new Date().toISOString(),String(error.message||error).slice(0,500),run.meta.last_row_id).run();
+    }
+  },
   async fetch(request,env) {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/media/") && request.method === "GET") {
