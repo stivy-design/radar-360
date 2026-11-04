@@ -201,7 +201,7 @@ $("#findMissingImages")?.addEventListener("click", async () => {
       found += Number(result.found || 0);
       remaining = Number(result.remaining || 0);
       message.textContent = result.message || (remaining ? "Verificando próxima matéria..." : "Busca concluída.");
-      if (remaining === 0 || result.found === 0) break;
+      if (remaining === 0 || Number(result.checked || 0) === 0) break;
     }
     message.textContent = found
       ? "Busca concluída: " + found + " fotografia(s) original(is) encontrada(s). " + (remaining ? remaining + " matéria(s) ainda estão sem foto." : "Todas as matérias foram verificadas.")
