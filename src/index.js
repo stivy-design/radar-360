@@ -168,7 +168,9 @@ async function handleApi(request, env) {
     if (!sameOrigin(request)) return fail("Origem inválida.",403);
     const article = await env.DB.prepare("SELECT id,title,summary,category FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='') ORDER BY published_at DESC LIMIT 1").first();
     if (!article) return json({ok:true,generated:0,remaining:0,message:"Todas as matérias publicadas já têm imagem."});
-    const key = await generateAiCover(env,article);
+    let key;
+    try { key = await generateAiCover(env,article); }
+    catch(error) { console.error("RADAR missing cover generation failed",error); return fail(String(error.message||error).slice(0,300),503); }
     await env.DB.prepare("UPDATE articles SET cover_image=?,updated_at=? WHERE id=? AND (cover_image IS NULL OR cover_image='')").bind(key,new Date().toISOString(),article.id).run();
     const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='')").first();
     return json({ok:true,generated:1,remaining:left?.n||0,title:article.title});
