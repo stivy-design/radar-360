@@ -64,8 +64,8 @@ async function generateAiCover(env, article) {
     bytes = Uint8Array.from(raw, ch => ch.charCodeAt(0));
   }
   if (!bytes || bytes.length < 1000) throw new Error("O modelo de imagem não retornou um arquivo PNG válido.");
-  const key = "ai/"+crypto.randomUUID()+".jpg";
-  await env.IMAGES.put(key, bytes, { httpMetadata:{ contentType:"image/jpeg", cacheControl:"public, max-age=31536000, immutable" }, customMetadata:{ generatedBy:"Workers AI", imageType:"illustrative" } });
+  const key = "ai/"+crypto.randomUUID()+".png";
+  await env.IMAGES.put(key, bytes, { httpMetadata:{ contentType:"image/png", cacheControl:"public, max-age=31536000, immutable" }, customMetadata:{ generatedBy:"Workers AI", imageType:"illustrative" } });
   return key;
 }
 
