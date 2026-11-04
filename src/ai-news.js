@@ -14,14 +14,56 @@ function tag(xml,name) {
   const m=xml.match(new RegExp("<"+name+"(?:\\s[^>]*)?>([\\s\\S]*?)</"+name+">","i"));
   return m?decodeXml(m[1]):"";
 }
+function attr(tag,name) {
+  const escaped=name.replace(/[.*+?^${}()|[\\]\\\\]/g,"\\\\$&");
+  return tag.match(new RegExp("\\\\b"+escaped+"\\\\s*=\\\\s*[\"']([^\"']+)[\"']","i"))?.[1]||"";
+}
+function imageFromMarkup(markup,baseUrl) {
+  const candidates=[
+    markup.match(/<media:content\\b[^>]*>/i)?.[0],
+    markup.match(/<media:thumbnail\\b[^>]*>/i)?.[0],
+    [...markup.matchAll(/<enclosure\\b[^>]*>/gi)].map(x=>x[0]).find(x=>/image/i.test(attr(x,"type"))),
+    markup.match(/<img\\b[^>]*>/i)?.[0]
+  ].filter(Boolean);
+  for(const tagText of candidates){
+    const raw=attr(tagText,"url")||attr(tagText,"src");
+    if(raw){try{const url=new URL(decodeXml(raw),baseUrl);if(["http:","https:"].includes(url.protocol))return url.href}catch{}}
+  }
+  return "";
+}
 function feedItems(xml,category,provider) {
-  const rss=[...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].map(m=>m[1]);
-  const atom=[...xml.matchAll(/<entry(?:\s[^>]*)?>([\s\S]*?)<\/entry>/gi)].map(m=>m[1]);
+  const rss=[...xml.matchAll(/<item(?:\\s[^>]*)?>([\\s\\S]*?)<\\/item>/gi)].map(m=>m[1]);
+  const atom=[...xml.matchAll(/<entry(?:\\s[^>]*)?>([\\s\\S]*?)<\\/entry>/gi)].map(m=>m[1]);
   return (rss.length?rss:atom).slice(0,6).map(item=>{
     const title=tag(item,"title");
     const link=tag(item,"link")||item.match(/<link[^>]+href=["']([^"']+)["']/i)?.[1]||"";
-    return {category,title,url:decodeXml(link),published:tag(item,"pubDate")||tag(item,"published")||tag(item,"updated"),description:tag(item,"description")||tag(item,"summary"),source:tag(item,"source")||provider};
-  }).filter(x=>x.title&&/^https?:\/\//i.test(x.url));
+    const url=decodeXml(link);
+    const description=tag(item,"description")||tag(item,"summary");
+    return {category,title,url,published:tag(item,"pubDate")||tag(item,"published")||tag(item,"updated"),description,source:tag(item,"source")||provider,image:imageFromMarkup(item,url)};
+  }).filter(x=>x.title&&/^https?:\\/\\//i.test(x.url));
+}
+async function pageImage(url) {
+  try{
+    const response=await fetch(url,{headers:{"user-agent":"Mozilla/5.0 (compatible; RADAR360Bot/1.0)","accept":"text/html"},redirect:"follow",signal:AbortSignal.timeout(5000)});
+    if(!response.ok)return "";
+    const html=(await response.text()).slice(0,180000);
+    const meta=[...html.matchAll(/<meta\\b[^>]*>/gi)].map(x=>x[0]);
+    for(const tagText of meta){
+      const key=(attr(tagText,"property")||attr(tagText,"name")).toLowerCase();
+      if(key==="og:image"||key==="twitter:image"){
+        const raw=attr(tagText,"content");
+        if(raw){const image=new URL(raw,url);if(["http:","https:"].includes(image.protocol))return image.href}
+      }
+    }
+  }catch{}
+  return "";
+}
+async function enrichImages(items) {
+  const targets=items.slice(0,24);
+  for(let i=0;i<targets.length;i+=4){
+    await Promise.all(targets.slice(i,i+4).map(async item=>{if(!item.image)item.image=await pageImage(item.url)}));
+  }
+  return items;
 }
 async function fetchFeed(url,category,provider) {
   const response=await fetch(url,{headers:{"accept":"application/rss+xml, application/atom+xml, application/xml, text/xml, */*"}});
@@ -45,7 +87,7 @@ async function collectFeeds() {
   }).slice(0,40);
 }
 export async function runAiNews(env) {
-  const feeds=await collectFeeds();
+  const feeds=await enrichImages(await collectFeeds());
   if(!feeds.length)throw new Error("Nenhuma notícia foi recebida das fontes RSS (Google News e Bing News). Confira a disponibilidade dos feeds.");
   let saved=0,review=0;
   for(const item of feeds) {
@@ -68,7 +110,7 @@ export async function runAiNews(env) {
     const normalized=cleanTitle.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
     const fingerprint=btoa(unescape(encodeURIComponent(normalized))).replace(/[^a-zA-Z0-9]/g,"").slice(0,180);
     const now=new Date().toISOString();
-    const source=[{name:item.source,url:item.url}];
+    const source=[{name:item.source,url:item.url,image:item.image||""}];
     const inserted=await env.DB.prepare("INSERT OR IGNORE INTO ai_news_candidates (fingerprint,title,summary,body,category,confidence,sources_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'review',?,?)")
       .bind(fingerprint,cleanTitle,summary,body,item.category,"baixa",JSON.stringify(source),now,now).run();
     if(inserted.meta?.changes){saved++;review++;}
