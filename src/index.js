@@ -52,7 +52,7 @@ async function generateAiCover(env, article) {
   const category = String(article.category || "Notícias").slice(0,50);
   const summary = String(article.summary || "").slice(0,350);
   const prompt = "Create a polished, photorealistic editorial illustration for a Brazilian digital news portal. News topic: "+title+". Category: "+category+". Context: "+summary+". Create a visually specific scene that clearly communicates this subject, sophisticated newsroom art direction, cinematic natural lighting, realistic details, clean composition, horizontal 16:9 crop, no text, no letters, no logos, no watermarks. This is an illustrative conceptual image, NOT documentary evidence: do not portray a real identifiable person, do not fabricate a recognizable real event, and do not imply this is an actual press photograph.";
-  const output = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", { prompt, width:768, height:432, num_steps:4 });
+  const output = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", { prompt, steps:4 });
   let bytes = null;
   const value = output?.image ?? output;
   if (value instanceof Uint8Array) bytes = value;
@@ -64,8 +64,8 @@ async function generateAiCover(env, article) {
     bytes = Uint8Array.from(raw, ch => ch.charCodeAt(0));
   }
   if (!bytes || bytes.length < 1000) throw new Error("O modelo de imagem não retornou um arquivo PNG válido.");
-  const key = "ai/"+crypto.randomUUID()+".png";
-  await env.IMAGES.put(key, bytes, { httpMetadata:{ contentType:"image/png", cacheControl:"public, max-age=31536000, immutable" }, customMetadata:{ generatedBy:"Workers AI", imageType:"illustrative" } });
+  const key = "ai/"+crypto.randomUUID()+".jpg";
+  await env.IMAGES.put(key, bytes, { httpMetadata:{ contentType:"image/jpeg", cacheControl:"public, max-age=31536000, immutable" }, customMetadata:{ generatedBy:"Workers AI", imageType:"illustrative" } });
   return key;
 }
 
