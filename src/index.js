@@ -101,7 +101,7 @@ async function handleApi(request, env) {
       throw error;
     }
   }
-  const aiDecision=path.match(/^\\/api\\/admin\\/ai\\/candidates\\/(\\d+)\\/(approve|reject)$/);
+  const aiDecision=path.match(/^\/api\/admin\/ai\/candidates\/(\d+)\/(approve|reject)$/);
   if(aiDecision && request.method==="POST"){
     if(!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
     const candidate=await env.DB.prepare("SELECT * FROM ai_news_candidates WHERE id=? AND status='review'").bind(Number(aiDecision[1])).first();
