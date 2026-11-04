@@ -1,4 +1,4 @@
-import { runAiNews } from "./ai-news.js";
+import { runAiNews, findOriginalPublisherImage } from "./ai-news.js";
 const COOKIE = "radar_session";
 const SESSION_SECONDS = 60 * 60 * 8;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -216,6 +216,10 @@ async function handleApi(request, env) {
       for (const sourceUrl of [...new Set(urls)].slice(0,3)) {
         image = await findPublisherImage(sourceUrl);
         if (image) break;
+      }
+      if (!image) {
+        try { image = await findOriginalPublisherImage(article.title, "Brasil"); }
+        catch (error) { console.warn("RADAR alternate publisher image search:", String(error)); }
       }
       if (image) {
         await env.DB.prepare("UPDATE articles SET cover_image=?,updated_at=? WHERE id=? AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%')").bind(image,new Date().toISOString(),article.id).run();
