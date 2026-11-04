@@ -127,12 +127,12 @@ async function handleApi(request, env) {
     if (q) { query += " AND (title LIKE ? OR summary LIKE ?)"; params.push("%"+q.slice(0,80)+"%","%"+q.slice(0,80)+"%"); }
     query += " ORDER BY published_at DESC LIMIT 50";
     const result = await env.DB.prepare(query).bind(...params).all();
-    return json({articles:result.results || []},{headers:{"cache-control":"public, max-age=60"}});
+    return json({articles:result.results || []},200,{"cache-control":"public, max-age=60"});
   }
   const detail = path.match(/^\/api\/news\/([a-z0-9-]+)$/);
   if (detail && request.method === "GET") {
     const article = await env.DB.prepare("SELECT title,slug,summary,body,category,cover_image,author,published_at FROM articles WHERE slug=? AND status='published'").bind(detail[1]).first();
-    return article ? json({article},{headers:{"cache-control":"public, max-age=60"}}) : fail("Matéria não encontrada.",404);
+    return article ? json({article},200,{"cache-control":"public, max-age=60"}) : fail("Matéria não encontrada.",404);
   }
   if (path.startsWith("/api/admin/")) {
     if (!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
