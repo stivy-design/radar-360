@@ -164,6 +164,20 @@ function storySimilarity(a, b) {
   const common = [...aa].filter(w => bb.has(w)).length;
   return common / Math.max(1, Math.min(aa.size, bb.size));
 }
+async function resolvePublisherUrl(url) {
+  try {
+    const initial = new URL(url);
+    if (initial.protocol !== "https:") return "";
+    const response = await fetch(initial.href, {
+      headers: { "user-agent": "Mozilla/5.0 (compatible; RADAR360Bot/1.0)", "accept": "text/html,application/xhtml+xml,*/*;q=0.8" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(4500)
+    });
+    const finalUrl = new URL(response.url || initial.href);
+    if (finalUrl.protocol !== "https:" || /(^|\.)google\.com$|news\.google\.com$|bing\.com$|bing\.net$/i.test(finalUrl.hostname)) return "";
+    return finalUrl.href;
+  } catch { return ""; }
+}
 async function writeNewsSummary(env, title, items) {
   const evidence = items.map((item, index) =>
     (index + 1) + ". Veículo: " + item.source + "\nManchete: " + item.title + "\nTrecho do feed: " + String(item.description || "").slice(0, 650)
@@ -214,13 +228,16 @@ export async function runAiNews(env) {
     const lead = sources[0];
     const title = lead.title.replace(/\s+/g, " ").trim().slice(0, 160);
     const summary = await writeNewsSummary(env, title, sources);
-    const sourceList = sources.map(item => ({ name: item.source, url: item.url })).filter(source => /^https:\/\//i.test(source.url));
-    const uniqueSources = [...new Map(sourceList.map(source => [normalizeHeadline(source.name), source])).values()];
+    const resolved = await Promise.all(sources.slice(0, 5).map(async item => ({
+      name: item.source,
+      url: await resolvePublisherUrl(item.url) || item.url
+    })));
+    const uniqueSources = [...new Map(resolved.filter(source => /^https:\/\//i.test(source.url)).map(source => [normalizeHeadline(source.name), source])).values()];
     if (uniqueSources.length < 2) continue;
     const body = [
       summary,
       "",
-      "Esta matéria foi preparada a partir de relatos publicados por veículos jornalísticos independentes. A confirmação definitiva dos fatos depende da apuração e das atualizações das fontes.",
+      "Esta matéria foi preparada automaticamente a partir de relatos publicados por veículos jornalísticos independentes. O texto resume apenas as informações disponíveis nos trechos consultados; consulte as fontes originais para atualizações e detalhes.",
       "",
       "Fontes consultadas:",
       ...uniqueSources.map(source => source.name + ": " + source.url)
@@ -228,15 +245,25 @@ export async function runAiNews(env) {
     const normalized = normalizeHeadline(title);
     const fingerprint = btoa(unescape(encodeURIComponent(normalized))).replace(/[^a-zA-Z0-9]/g, "").slice(0, 180);
     const now = new Date().toISOString();
-    const candidate = await env.DB.prepare("INSERT OR IGNORE INTO ai_news_candidates (fingerprint,title,summary,body,category,confidence,sources_json,status,created_at,updated_at) VALUES (?,?,?,?,?,? ,?,'review',?,?)")
-      .bind(fingerprint, title, summary.slice(0, 300), body, cluster.category, "alta — duas ou mais fontes editoriais", JSON.stringify(uniqueSources), now, now).run();
-    if (!candidate.meta?.changes) continue;
+    let candidateRow = await env.DB.prepare("SELECT id,status,article_id FROM ai_news_candidates WHERE fingerprint=?").bind(fingerprint).first();
+    if (candidateRow?.status === "published" || candidateRow?.article_id) continue;
+    const sourceImage = await pageImage(uniqueSources[0].url).catch(() => "");
+    if (!candidateRow) {
+      const candidate = await env.DB.prepare("INSERT OR IGNORE INTO ai_news_candidates (fingerprint,title,summary,body,category,confidence,sources_json,status,created_at,updated_at) VALUES (?,?,?,?,?,? ,?,'review',?,?)")
+        .bind(fingerprint, title, summary.slice(0, 300), body, cluster.category, "corroborada — duas ou mais fontes editoriais", JSON.stringify(uniqueSources), now, now).run();
+      if (!candidate.meta?.changes) {
+        candidateRow = await env.DB.prepare("SELECT id,status,article_id FROM ai_news_candidates WHERE fingerprint=?").bind(fingerprint).first();
+        if (!candidateRow || candidateRow.status === "published" || candidateRow.article_id) continue;
+      } else {
+        candidateRow = { id: candidate.meta.last_row_id, status: "review", article_id: null };
+      }
+    }
     saved++;
     const slug = normalizeHeadline(title).replace(/\s+/g, "-").slice(0, 90) + "-" + crypto.randomUUID().slice(0, 8);
-    const inserted = await env.DB.prepare("INSERT INTO articles(title,slug,summary,body,category,status,author,cover_image,created_at,updated_at,published_at) VALUES(?,?,?,?,?,'published','Redação RADAR 360',NULL,?,?,?)")
-      .bind(title, slug, summary.slice(0, 300), body, cluster.category, now, now, now).run();
-    await env.DB.prepare("UPDATE ai_news_candidates SET status='published',article_id=?,updated_at=? WHERE id=?")
-      .bind(inserted.meta.last_row_id, now, candidate.meta.last_row_id).run();
+    const inserted = await env.DB.prepare("INSERT INTO articles(title,slug,summary,body,category,status,author,cover_image,created_at,updated_at,published_at) VALUES(?,?,?,?,?,'published','Redação RADAR 360',?,?,?,?)")
+      .bind(title, slug, summary.slice(0, 300), body, cluster.category, sourceImage || null, now, now, now).run();
+    await env.DB.prepare("UPDATE ai_news_candidates SET status='published',article_id=?,sources_json=?,body=?,updated_at=? WHERE id=?")
+      .bind(inserted.meta.last_row_id, JSON.stringify(uniqueSources), body, now, candidateRow.id).run();
     published++;
   }
   return { found: feeds.length, saved, review, published, corroborated: published, mode: "automatic_multi_source" };
