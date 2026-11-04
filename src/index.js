@@ -69,6 +69,40 @@ async function generateAiCover(env, article) {
   return key;
 }
 
+
+async function findPublisherImage(sourceUrl) {
+  let parsed;
+  try { parsed = new URL(sourceUrl); } catch { return ""; }
+  if (parsed.protocol !== "https:" || !parsed.hostname || parsed.hostname === "localhost") return "";
+  try {
+    const response = await fetch(parsed.href, {
+      headers: { "user-agent": "Mozilla/5.0 (compatible; RADAR360/1.0)", "accept": "text/html" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(6500)
+    });
+    if (!response.ok || !response.headers.get("content-type")?.includes("text/html")) return "";
+    const finalUrl = new URL(response.url);
+    if (finalUrl.protocol !== "https:" || finalUrl.hostname === "localhost") return "";
+    const html = (await response.text()).slice(0, 220000);
+    const tags = [...html.matchAll(/<meta\\b[^>]*>/gi)].map(match => match[0]);
+    const readAttr = (tag, name) => {
+      const match = tag.match(new RegExp(name + "\\\\s*=\\\\s*[\"']([^\"']+)[\"']", "i"));
+      return match ? match[1].replace(/&amp;/g, "&").replace(/&#x2F;/gi, "/") : "";
+    };
+    for (const tag of tags) {
+      const key = (readAttr(tag, "property") || readAttr(tag, "name")).toLowerCase();
+      if (key !== "og:image" && key !== "twitter:image") continue;
+      const raw = readAttr(tag, "content");
+      if (!raw) continue;
+      try {
+        const image = new URL(raw, finalUrl);
+        if (image.protocol === "https:") return image.href;
+      } catch {}
+    }
+  } catch (error) { console.warn("RADAR publisher image lookup:", String(error)); }
+  return "";
+}
+
 async function handleApi(request, env) {
   const url = new URL(request.url), path = url.pathname;
   if (request.method === "OPTIONS") return new Response(null,{status:204,headers:{"allow":"GET,POST,PUT,DELETE,OPTIONS"}});
@@ -160,6 +194,24 @@ async function handleApi(request, env) {
   if (detail && request.method === "GET") {
     const article = await env.DB.prepare("SELECT title,slug,summary,body,category,cover_image,author,published_at FROM articles WHERE slug=? AND status='published'").bind(detail[1]).first();
     return article ? json({article},200,{"cache-control":"public, max-age=60"}) : fail("Matéria não encontrada.",404);
+  }
+
+  if (path === "/api/admin/images/find-missing" && request.method === "POST") {
+    if (!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
+    if (!sameOrigin(request)) return fail("Origem inválida.",403);
+    const article = await env.DB.prepare("SELECT id,title,body FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='') ORDER BY published_at DESC LIMIT 1").first();
+    if (!article) return json({ok:true,found:0,remaining:0,message:"Todas as matérias publicadas já têm fotografia cadastrada."});
+    const urls = [...String(article.body || "").matchAll(/https:\\/\\/[^\\s<>"']+/gi)].map(match=>match[0].replace(/[),.;]+$/,""));
+    let image = "";
+    for (const sourceUrl of [...new Set(urls)].slice(0,4)) {
+      image = await findPublisherImage(sourceUrl);
+      if (image) break;
+    }
+    if (image) {
+      await env.DB.prepare("UPDATE articles SET cover_image=?,updated_at=? WHERE id=? AND (cover_image IS NULL OR cover_image='')").bind(image,new Date().toISOString(),article.id).run();
+    }
+    const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='')").first();
+    return json({ok:true,found:image?1:0,remaining:left?.n||0,title:article.title,message:image?"Fotografia original encontrada.":"A fonte não disponibilizou uma fotografia pública nesta matéria."});
   }
 
   if (path === "/api/admin/images/generate-missing" && request.method === "POST") {
