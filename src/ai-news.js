@@ -87,6 +87,34 @@ async function collectFeeds() {
     if(seen.has(key))return false;seen.add(key);return true;
   }).slice(0,40);
 }
+function normalizeHeadline(value) {
+  return String(value||"").toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim();
+}
+export async function findOriginalPublisherImage(title, category) {
+  const query='"'+String(title||"").slice(0,150)+'"';
+  const rss="https://www.bing.com/news/search?q="+encodeURIComponent(query)+"&format=rss&setlang=pt-br&cc=BR";
+  const response=await fetch(rss,{headers:{"accept":"application/rss+xml, application/xml, text/xml, */*"},signal:AbortSignal.timeout(6000)});
+  if(!response.ok)return "";
+  const xml=await response.text();
+  const items=feedItems(xml,category||"Brasil","Bing News RSS");
+  const target=normalizeHeadline(title);
+  const ranked=items.map(item=>{
+    const a=new Set(normalizeHeadline(item.title).split(" "));
+    const b=new Set(target.split(" "));
+    const overlap=[...a].filter(word=>b.has(word)&&word.length>2).length;
+    return {...item,score:overlap/Math.max(1,Math.min(a.size,b.size))};
+  }).sort((a,b)=>b.score-a.score);
+  for(const item of ranked.slice(0,3)){
+    if(item.score<0.72)continue;
+    if(item.image && /^https:\/\//i.test(item.image))return item.image;
+    if(item.url && !/bing\.com\/news\/search/i.test(item.url)){
+      const image=await pageImage(item.url);
+      if(image)return image;
+    }
+  }
+  return "";
+}
+
 export async function runAiNews(env) {
   const feeds=await enrichImages(await collectFeeds());
   if(!feeds.length)throw new Error("Nenhuma notícia foi recebida das fontes RSS (Google News e Bing News). Confira a disponibilidade dos feeds.");
