@@ -133,58 +133,25 @@ $("#cancelEdit").addEventListener("click", resetForm);
 
 async function loadAiNews() {
   try {
-    const results = await Promise.all([api("/api/admin/ai/status"), api("/api/admin/ai/candidates")]);
-    const status = results[0];
-    const data = results[1];
-    $("#aiPending").textContent = status.pending;
-    $("#aiLastRun").textContent = status.latest?.started_at ? new Date(status.latest.started_at).toLocaleString("pt-BR") : "—";
-    $("#aiLastStatus").textContent = status.latest?.status || "Nenhuma execução";
-    const candidates = data.candidates || [];
-    $("#aiCandidates").innerHTML = candidates.length ? candidates.map((candidate) => {
-      let sources = [];
-      try { sources = JSON.parse(candidate.sources_json || "[]"); } catch (error) { console.warn(error); }
-      const sourceLinks = sources.map((source) =>
-        '<li><a href="' + esc(source.url) + '" target="_blank" rel="noopener noreferrer">' + esc(source.name) + "</a></li>"
-      ).join("");
-      const imageSource = sources.find((source) => source.image && source.image.startsWith("http"));
-      const imagePreview = imageSource
-        ? '<img src="' + esc(imageSource.image) + '" alt="Prévia da imagem da notícia">'
-        : "<small>O feed não forneceu imagem. Confira a fonte original.</small>";
-      return '<article class="ai-candidate"><div class="ai-candidate-head"><span class="category">' +
-        esc(candidate.category) + '</span><small>' + new Date(candidate.created_at).toLocaleString("pt-BR") +
-        '</small></div><h3>' + esc(candidate.title) + '</h3><p>' + esc(candidate.summary) +
-        '</p><details><summary>Ler matéria e fontes</summary><div class="ai-body">' + esc(candidate.body) +
-        '</div><ul>' + sourceLinks + '</ul></details><div class="ai-image-preview">' + imagePreview +
-        '</div><div class="ai-actions"><button class="primary" data-ai-approve="' + candidate.id +
-        '">Aprovar e publicar</button><button class="secondary" data-ai-reject="' + candidate.id +
-        '">Rejeitar</button></div></article>';
-    }).join("") : '<p class="table-note">Nenhuma pauta pendente. Clique em “Buscar notícias agora” ou aguarde a próxima coleta automática.</p>';
+    const status = await api("/api/admin/ai/status");
+    $("#aiPending").textContent = status.latest?.published_count ?? 0;
+    $("#aiLastRun").textContent = status.latest?.started_at ? new Date(status.latest.started_at).toLocaleString("pt-BR") : "Aguardando execução diária";
+    $("#aiLastStatus").textContent = status.latest?.status || "Agendada diariamente";
+    $("#aiMessage").textContent = status.latest?.error_message || "A publicação automática está ativa. Notícias só entram no portal quando há correspondência entre pelo menos duas fontes editoriais distintas.";
   } catch (error) { $("#aiMessage").textContent = error.message; }
 }
+
 $("#runAi")?.addEventListener("click", async () => {
   const button = $("#runAi");
   button.disabled = true;
   $("#aiMessage").textContent = "Coletando pautas de fontes RSS gratuitas. Aguarde...";
   try {
     const result = await api("/api/admin/ai/run", { method: "POST" });
-    $("#aiMessage").textContent = "Concluído: " + result.found + " pautas recebidas; " + result.review + " novas pautas aguardam sua apuração. Nenhuma foi publicada.";
-    await loadAiNews();
-  } catch (error) { $("#aiMessage").textContent = error.message; }
-  finally { button.disabled = false; }
-});
-$("#aiCandidates")?.addEventListener("click", async (event) => {
-  const approveId = event.target.dataset.aiApprove;
-  const rejectId = event.target.dataset.aiReject;
-  const id = approveId || rejectId;
-  if (!id) return;
-  if (approveId && !confirm("Publicar esta matéria no portal RADAR 360?")) return;
-  if (rejectId && !confirm("Rejeitar e arquivar esta pauta?")) return;
-  try {
-    await api("/api/admin/ai/candidates/" + id + "/" + (approveId ? "approve" : "reject"), { method: "POST" });
-    $("#aiMessage").textContent = approveId ? "Matéria publicada no portal." : "Pauta rejeitada.";
+    $("#aiMessage").textContent = "Busca concluída: " + result.found + " notícias analisadas; " + result.published + " matérias publicadas automaticamente após confirmação em fontes independentes.";
     await loadAiNews();
     await loadArticles();
   } catch (error) { $("#aiMessage").textContent = error.message; }
+  finally { button.disabled = false; }
 });
 
 $("#findMissingImages")?.addEventListener("click", async () => {
