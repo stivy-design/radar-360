@@ -138,9 +138,8 @@ async function handleApi(request, env) {
     const now=new Date().toISOString();
     const sources=JSON.parse(candidate.sources_json);
     const body=candidate.body+"\\n\\nFontes consultadas:\\n"+sources.map(s=>s.name+": "+s.url).join("\\n");
-    let coverImage=null;
-    try { coverImage=await generateAiCover(env,candidate); }
-    catch(error) { console.error("RADAR AI cover generation failed",error); coverImage=sources.find(s=>typeof s.image==="string"&&(s.image.startsWith("https://")||s.image.startsWith("http://")))?.image||null; }
+    // Use only a photo supplied by the original publisher/feed.
+    const coverImage=sources.find(s=>typeof s.image==="string"&&/^https:\/\//i.test(s.image))?.image||null;
     const inserted=await env.DB.prepare("INSERT INTO articles(title,slug,summary,body,category,status,author,cover_image,created_at,updated_at,published_at) VALUES(?,?,?,?,?,'published','Redação RADAR 360',?,?,?,?)")
       .bind(candidate.title,slug,candidate.summary,body,candidate.category,coverImage,now,now,now).run();
     await env.DB.prepare("UPDATE ai_news_candidates SET status='published',article_id=?,updated_at=? WHERE id=?").bind(inserted.meta.last_row_id,now,candidate.id).run();
