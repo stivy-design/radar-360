@@ -10,7 +10,7 @@ not_found_handling = "single-page-application"
 [[d1_databases]]
 binding = "DB"
 database_name = "radar-360-db"
-database_id = "SUBSTITUIR_PELO_ID_DO_D1"
+database_id = "2db8a678-0870-4434-952f-d48192da556f"
 migrations_dir = "migrations"
 
 [[r2_buckets]]
