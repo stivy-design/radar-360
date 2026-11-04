@@ -45,10 +45,10 @@ async function loadPublishedNews(filterNews){
   return '/media/'+value.split('/').map(encodeURIComponent).join('/');
  };
  const imageMarkup=(article,cls='news-image')=>{
-  const src=imageUrl(article.cover_image);
-  if(!src)return '<div class="'+cls+' image-placeholder">IMAGEM NÃO DISPONÍVEL</div>';
-  const img='<img src="'+esc(src)+'" alt="Imagem relacionada: '+esc(article.title)+'" loading="lazy">';
-  return article.cover_image&&String(article.cover_image).startsWith('ai/')?'<span class="'+cls+' ai-image-frame">'+img+'<small>Ilustração gerada por IA</small></span>':'<img class="'+cls+'" src="'+esc(src)+'" alt="Imagem relacionada: '+esc(article.title)+'" loading="lazy">';
+  const value=String(article.cover_image||'');
+  if(!value||value.startsWith('ai/'))return '<div class="'+cls+' image-placeholder">FOTO DA FONTE NÃO DISPONÍVEL</div>';
+  const src=imageUrl(value);
+  return '<img class="'+cls+'" src="'+esc(src)+'" alt="Foto relacionada à notícia: '+esc(article.title)+'" loading="lazy">';
  };
  try{
   const response=await fetch('/api/news',{headers:{accept:'application/json'},cache:'no-store'});
