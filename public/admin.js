@@ -186,4 +186,32 @@ $("#aiCandidates")?.addEventListener("click", async (event) => {
     await loadArticles();
   } catch (error) { $("#aiMessage").textContent = error.message; }
 });
+
+$("#findMissingImages")?.addEventListener("click", async () => {
+  const button = $("#findMissingImages");
+  const message = $("#imageSearchMessage");
+  if (!button || !message) return;
+  button.disabled = true;
+  let found = 0;
+  let remaining = null;
+  message.textContent = "Procurando fotografias nas fontes originais. Isso pode levar alguns minutos...";
+  try {
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const result = await api("/api/admin/images/find-missing", { method: "POST" });
+      found += Number(result.found || 0);
+      remaining = Number(result.remaining || 0);
+      message.textContent = result.message || (remaining ? "Verificando próxima matéria..." : "Busca concluída.");
+      if (remaining === 0 || result.found === 0) break;
+    }
+    message.textContent = found
+      ? "Busca concluída: " + found + " fotografia(s) original(is) encontrada(s). " + (remaining ? remaining + " matéria(s) ainda estão sem foto." : "Todas as matérias foram verificadas.")
+      : (remaining ? "Nenhuma fotografia pública foi encontrada nesta rodada. " + remaining + " matéria(s) continuam sem foto." : "Todas as matérias foram verificadas.");
+    await loadArticles();
+  } catch (error) {
+    message.textContent = "Erro ao buscar fotografias: " + (error.message || "falha na comunicação com o servidor.");
+  } finally {
+    button.disabled = false;
+  }
+});
+
 checkSession();
