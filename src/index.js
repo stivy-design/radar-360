@@ -73,30 +73,37 @@ async function generateAiCover(env, article) {
 async function findPublisherImage(sourceUrl) {
   let parsed;
   try { parsed = new URL(sourceUrl); } catch { return ""; }
-  if (parsed.protocol !== "https:" || !parsed.hostname || parsed.hostname === "localhost") return "";
+  if (parsed.protocol !== "https:" || !parsed.hostname || /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$)/i.test(parsed.hostname)) return "";
   try {
     const response = await fetch(parsed.href, {
-      headers: { "user-agent": "Mozilla/5.0 (compatible; RADAR360/1.0)", "accept": "text/html" },
+      headers: { "user-agent": "Mozilla/5.0 (compatible; RADAR360/1.0; +https://radar-360.stivy-071.workers.dev)", "accept": "text/html,application/xhtml+xml,*/*;q=0.8" },
       redirect: "follow",
-      signal: AbortSignal.timeout(6500)
+      signal: AbortSignal.timeout(9000)
     });
-    if (!response.ok || !response.headers.get("content-type")?.includes("text/html")) return "";
-    const finalUrl = new URL(response.url);
-    if (finalUrl.protocol !== "https:" || finalUrl.hostname === "localhost") return "";
-    const html = (await response.text()).slice(0, 220000);
+    if (!response.ok || !/html|xml/i.test(response.headers.get("content-type") || "")) return "";
+    const finalUrl = new URL(response.url || parsed.href);
+    if (finalUrl.protocol !== "https:" || /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$)/i.test(finalUrl.hostname)) return "";
+    const html = (await response.text()).slice(0, 350000);
     const tags = [...html.matchAll(/<meta\b[^>]*>/gi)].map(match => match[0]);
     const readAttr = (tag, name) => {
       const match = tag.match(new RegExp(name + "\\s*=\\s*[\"']([^\"']+)[\"']", "i"));
-      return match ? match[1].replace(/&amp;/g, "&").replace(/&#x2F;/gi, "/") : "";
+      return match ? match[1].replace(/&amp;/g, "&").replace(/&#x2F;/gi, "/").replace(/&quot;/g, '"') : "";
     };
+    const candidates = [];
     for (const tag of tags) {
       const key = (readAttr(tag, "property") || readAttr(tag, "name")).toLowerCase();
-      if (key !== "og:image" && key !== "twitter:image") continue;
-      const raw = readAttr(tag, "content");
-      if (!raw) continue;
+      if (["og:image", "og:image:url", "twitter:image", "twitter:image:src"].includes(key)) {
+        const raw = readAttr(tag, "content");
+        if (raw) candidates.push(raw);
+      }
+    }
+    const imageSrc = html.match(/<link\b[^>]*rel=["'][^"']*image_src[^"']*["'][^>]*>/i)?.[0];
+    if (imageSrc) candidates.push(readAttr(imageSrc, "href"));
+    for (const match of html.matchAll(/"image"\s*:\s*(?:"([^"]+)"|\[\s*"([^"]+)")/gi)) candidates.push(match[1] || match[2]);
+    for (const raw of candidates) {
       try {
-        const image = new URL(raw, finalUrl);
-        if (image.protocol === "https:") return image.href;
+        const image = new URL(raw.replace(/\\u0026/g, "&"), finalUrl);
+        if (image.protocol === "https:" && !/\.svg(\?|$)/i.test(image.href)) return image.href;
       } catch {}
     }
   } catch (error) { console.warn("RADAR publisher image lookup:", String(error)); }
@@ -199,19 +206,27 @@ async function handleApi(request, env) {
   if (path === "/api/admin/images/find-missing" && request.method === "POST") {
     if (!await isAdmin(request,env)) return fail("Acesso não autorizado.",401);
     if (!sameOrigin(request)) return fail("Origem inválida.",403);
-    const article = await env.DB.prepare("SELECT id,title,body FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%') ORDER BY published_at DESC LIMIT 1").first();
-    if (!article) return json({ok:true,found:0,remaining:0,message:"Todas as matérias publicadas já têm fotografia cadastrada."});
-    const urls = [...String(article.body || "").matchAll(/https:\/\/[^\s<>"']+/gi)].map(match=>match[0].replace(/[),.;]+$/,""));
-    let image = "";
-    for (const sourceUrl of [...new Set(urls)].slice(0,4)) {
-      image = await findPublisherImage(sourceUrl);
-      if (image) break;
-    }
-    if (image) {
-      await env.DB.prepare("UPDATE articles SET cover_image=?,updated_at=? WHERE id=? AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%')").bind(image,new Date().toISOString(),article.id).run();
+    const articles = await env.DB.prepare("SELECT id,title,body FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%') ORDER BY updated_at ASC LIMIT 3").all();
+    if (!articles.results?.length) return json({ok:true,found:0,checked:0,remaining:0,message:"Todas as matérias publicadas já foram verificadas."});
+    let found = 0, checked = 0, lastTitle = "";
+    for (const article of articles.results) {
+      lastTitle = article.title;
+      const urls = [...String(article.body || "").matchAll(/https:\/\/[^\s<>"']+/gi)].map(match=>match[0].replace(/[),.;]+$/,""));
+      let image = "";
+      for (const sourceUrl of [...new Set(urls)].slice(0,5)) {
+        image = await findPublisherImage(sourceUrl);
+        if (image) break;
+      }
+      if (image) {
+        await env.DB.prepare("UPDATE articles SET cover_image=?,updated_at=? WHERE id=? AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%')").bind(image,new Date().toISOString(),article.id).run();
+        found++;
+      } else {
+        await env.DB.prepare("UPDATE articles SET updated_at=? WHERE id=?").bind(new Date().toISOString(),article.id).run();
+      }
+      checked++;
     }
     const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM articles WHERE status='published' AND (cover_image IS NULL OR cover_image='' OR cover_image LIKE 'ai/%')").first();
-    return json({ok:true,found:image?1:0,remaining:left?.n||0,title:article.title,message:image?"Fotografia original encontrada.":"A fonte não disponibilizou uma fotografia pública nesta matéria."});
+    return json({ok:true,found,checked,remaining:left?.n||0,title:lastTitle,message:found ? found+" fotografia(s) original(is) encontrada(s) em "+checked+" matéria(s) verificadas." : checked+" matéria(s) verificadas; nenhuma fotografia original pública foi localizada nesta rodada."});
   }
 
   if (path === "/api/admin/images/generate-missing" && request.method === "POST") {
