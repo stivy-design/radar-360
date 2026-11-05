@@ -209,10 +209,10 @@ export async function runAiNews(env) {
     const time = Date.parse(item.published || "");
     return Number.isFinite(time) && time <= nowMs + 60 * 60 * 1000 && nowMs - time <= 36 * 60 * 60 * 1000;
   });
+  const trustedItems = fresh.filter(item => trustedPublisher(item.source));
   const clusters = [];
-  for (const item of fresh) {
+  for (const item of trustedItems) {
     const publisher = String(item.source || "").trim();
-    if (!trustedPublisher(publisher)) continue;
     let cluster = clusters.find(group => group.category === item.category && storySimilarity(group.items[0].title, item.title) >= 0.68);
     if (!cluster) {
       cluster = { category: item.category, items: [] };
@@ -220,11 +220,12 @@ export async function runAiNews(env) {
     }
     if (!cluster.items.some(existing => normalizeHeadline(existing.source) === normalizeHeadline(publisher))) cluster.items.push(item);
   }
-  let published = 0, review = 0, saved = 0;
+  let published = 0, review = 0, saved = 0, corroboratedClusters = 0, resolvedClusters = 0;
   for (const cluster of clusters) {
     const sources = cluster.items.filter(item => trustedPublisher(item.source));
     const uniquePublishers = new Set(sources.map(item => normalizeHeadline(item.source)));
     if (uniquePublishers.size < 2) continue;
+    corroboratedClusters++;
     const lead = sources[0];
     const title = lead.title.replace(/\s+/g, " ").trim().slice(0, 160);
     const summary = await writeNewsSummary(env, title, sources);
@@ -234,6 +235,7 @@ export async function runAiNews(env) {
     })));
     const uniqueSources = [...new Map(resolved.filter(source => /^https:\/\//i.test(source.url)).map(source => [normalizeHeadline(source.name), source])).values()];
     if (uniqueSources.length < 2) continue;
+    resolvedClusters++;
     const body = [
       summary,
       "",
@@ -270,5 +272,15 @@ export async function runAiNews(env) {
       .bind(inserted.meta.last_row_id, JSON.stringify(uniqueSources), body, now, candidateRow.id).run();
     published++;
   }
-  return { found: feeds.length, saved, review, published, corroborated: published, mode: "automatic_multi_source" };
+  return {
+    found: feeds.length,
+    fresh: fresh.length,
+    trusted: trustedItems.length,
+    clusters: clusters.length,
+    corroboratedClusters,
+    resolvedClusters,
+    saved, review, published,
+    corroborated: published,
+    mode: "automatic_multi_source"
+  };
 }
