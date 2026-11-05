@@ -149,7 +149,7 @@ $("#runAi")?.addEventListener("click", async () => {
     const result = await api("/api/admin/ai/run", { method: "POST" });
     await loadAiNews();
     await loadArticles();
-    $("#aiMessage").textContent = "Busca concluída: " + result.found + " notícias analisadas; " + result.published + " matérias publicadas automaticamente após confirmação em fontes independentes.";
+    $("#aiMessage").textContent = "Diagnóstico da busca: " + result.found + " recebidas dos feeds; " + (result.fresh ?? "—") + " dentro das últimas 36h; " + (result.trusted ?? "—") + " de veículos reconhecidos; " + (result.clusters ?? "—") + " grupos de assuntos; " + (result.corroboratedClusters ?? "—") + " com 2+ veículos; " + (result.resolvedClusters ?? "—") + " com links originais válidos; " + result.published + " publicadas.";
   } catch (error) { $("#aiMessage").textContent = error.message; }
   finally { button.disabled = false; }
 });
